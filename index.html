@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>פלישת חייזרים - חללית עם להבות</title>
+    <style>
+        :root {
+            --neon-green: #00f3ff;
+            --neon-purple: #bc13fe;
+            --neon-yellow: #ffcf00;
+            --bg-dark: #020205;
+        }
+
+        body, html {
+            margin: 0; padding: 0;
+            width: 100%; height: 100%;
+            overflow: hidden;
+            background-color: var(--bg-dark);
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            color: white;
+            user-select: none;
+        }
+
+        #game-wrapper {
+            position: relative;
+            width: 100vw; height: 100vh;
+            background: radial-gradient(circle at center, #1a1a2e 0%, #020205 100%);
+        }
+
+        canvas { display: block; }
+
+        .hud {
+            position: absolute; top: 20px;
+            padding: 10px 20px;
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+            border-radius: 10px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            pointer-events: none; z-index: 100;
+        }
+
+        #score-container { right: 20px; text-align: right; }
+        #lives-container { left: 20px; }
+
+        #skills-container {
+            position: absolute; bottom: 15px; left: 50%;
+            transform: translateX(-50%);
+            display: flex; gap: 10px;
+            z-index: 100;
+        }
+
+        .skill-box {
+            width: 45px; height: 45px;
+            background: rgba(0, 0, 0, 0.7);
+            border: 2px solid #333;
+            border-radius: 8px;
+            display: flex; flex-direction: column;
+            align-items: center; justify-content: center;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .skill-box.ready { border-color: var(--neon-purple); box-shadow: 0 0 10px var(--neon-purple); }
+        .skill-key { font-size: 8px; color: #aaa; position: absolute; top: 1px; right: 3px; }
+        .skill-icon { font-size: 16px; }
+        
+        .skill-overlay {
+            position: absolute; bottom: 0; left: 0; width: 100%;
+            background: rgba(188, 19, 254, 0.4);
+            transition: height 0.1s linear;
+        }
+
+        #active-powerup-ui {
+            position: absolute; top: 80px; left: 50%;
+            transform: translateX(-50%);
+            display: none;
+            background: rgba(255, 255, 255, 0.1);
+            padding: 5px 15px;
+            border-radius: 20px;
+            border: 1px solid var(--neon-green);
+            font-size: 14px;
+            z-index: 100;
+            backdrop-filter: blur(5px);
+        }
+
+        .label { font-size: 10px; text-transform: uppercase; color: var(--neon-green); }
+        .value { font-size: 20px; font-weight: 800; font-family: monospace; display: block; }
+
+        #overlay {
+            position: absolute; inset: 0;
+            background: rgba(0, 0, 0, 0.85);
+            display: flex; flex-direction: column;
+            justify-content: center; align-items: center;
+            z-index: 1000;
+        }
+
+        #announcement {
+            position: absolute; top: 30%; left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 40px; font-weight: 900;
+            color: var(--neon-yellow); opacity: 0;
+            pointer-events: none; transition: 0.3s; z-index: 50;
+        }
+        
+        .btn-start {
+            padding: 15px 40px; font-size: 1.1rem; font-weight: bold;
+            color: white; background: transparent; border: 2px solid var(--neon-green);
+            cursor: pointer; border-radius: 5px;
+        }
+
+        #warp-effect {
+            position: absolute; inset: 0;
+            background: white; opacity: 0;
+            pointer-events: none; z-index: 200;
+        }
+    </style>
+</head>
+<body>
+
+<div id="game-wrapper">
+    <div id="warp-effect"></div>
+    
+    <div id="score-container" class="hud">
+        <span class="label">ניקוד</span>
+        <span id="score" class="value">00000</span>
+    </div>
+    <div id="lives-container" class="hud">
+        <span class="label">חיים</span>
+        <span id="lives" class="value">❤❤❤</span>
+    </div>
+
+    <div id="active-powerup-ui">
+        <span id="powerup-text">מגן פעיל</span>: <span id="powerup-time">0.0</span>
+    </div>
+
+    <div id="skills-container">
+        <div class="skill-box" id="skill-1">
+            <span class="skill-key">1</span>
+            <span class="skill-icon">☢</span>
+            <div class="skill-overlay" id="overlay-1"></div>
+        </div>
+        <div class="skill-box" id="skill-2">
+            <span class="skill-key">2</span>
+            <span class="skill-icon">🚀</span>
+            <div class="skill-overlay" id="overlay-2"></div>
+        </div>
+    </div>
+
+    <div id="announcement">שלב 1</div>
+
+    <div id="overlay">
+        <h1 style="color: var(--neon-green); font-size: 3rem; margin-bottom: 20px;">פלישת חייזרים</h1>
+        <button class="btn-start" id="start-btn">התחל משחק</button>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+</div>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const scoreVal = document.getElementById('score');
+    const livesVal = document.getElementById('lives');
+    const overlay = document.getElementById('overlay');
+    const announcement = document.getElementById('announcement');
+    const pwrUi = document.getElementById('active-powerup-ui');
+    const pwrTime = document.getElementById('powerup-time');
+    const warpEffect = document.getElementById('warp-effect');
+
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    function playSound(freq, type, duration, vol, sweep = true) {
+        try {
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.type = type;
+            osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+            if (sweep) osc.frequency.exponentialRampToValueAtTime(10, audioCtx.currentTime + duration);
+            gain.gain.setValueAtTime(vol, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+            osc.connect(gain); gain.connect(audioCtx.destination);
+            osc.start(); osc.stop(audioCtx.currentTime + duration);
+        } catch(e) {}
+    }
+
+    const sfx = {
+        shoot: () => playSound(600, 'square', 0.1, 0.02),
+        nuke: () => playSound(100, 'sawtooth', 1.2, 0.15),
+        power: () => playSound(800, 'sine', 0.5, 0.1, false),
+        warp: () => playSound(1200, 'sine', 0.8, 0.1, true),
+        hit: () => playSound(150, 'sawtooth', 0.3, 0.05)
+    };
+
+    let state = { 
+        running: false, score: 0, lives: 3, level: 1, 
+        width: 0, height: 0, stars: [],
+        skills: [
+            { id: 1, cooldown: 35, current: 0 }, 
+            { id: 2, cooldown: 25, current: 0 } 
+        ],
+        giftTime: 0, isWarping: false,
+        tick: 0 // עבור האנימציה של האש
+    };
+
+    let player, enemies = [], bullets = [], particles = [], gifts = [];
+
+    function init() {
+        state.width = canvas.width = window.innerWidth;
+        state.height = canvas.height = window.innerHeight;
+        state.stars = Array.from({length: 100}, () => ({
+            x: Math.random() * state.width, y: Math.random() * state.height,
+            size: Math.random() * 2, speed: Math.random() * 2 + 0.5
+        }));
+        player = { 
+            x: state.width/2, y: state.height-100, targetX: state.width/2, 
+            easing: 0.15, hasShield: false, hasDouble: false 
+        };
+    }
+
+    class Gift {
+        constructor(x, y, type) {
+            this.x = x; this.y = y; this.type = type; 
+            this.speed = 3.5; this.size = 15;
+            this.color = type === 'shield' ? '#00ff00' : (type === 'double' ? '#00f3ff' : '#ffcf00');
+        }
+        update() { this.y += this.speed; }
+        draw() {
+            ctx.save();
+            ctx.shadowBlur = 15; ctx.shadowColor = this.color;
+            ctx.fillStyle = this.color;
+            ctx.beginPath(); ctx.arc(this.x, this.y, this.size, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = "black"; ctx.font = "bold 12px Arial"; ctx.textAlign = "center";
+            const icon = this.type === 'shield' ? '🛡' : (this.type === 'double' ? 'II' : '⚡');
+            ctx.fillText(icon, this.x, this.y + 4);
+            ctx.restore();
+        }
+    }
+
+    function useSkill(id) {
+        if (!state.running || state.isWarping) return;
+        const skill = state.skills.find(s => s.id === id);
+        if (skill.current < skill.cooldown) return;
+        skill.current = 0;
+        if (id === 1) {
+            sfx.nuke();
+            enemies.forEach(en => {
+                for(let j=0; j<15; j++) particles.push(new Particle(en.x + en.w/2, en.y + en.h/2, en.color));
+                state.score += 50;
+            });
+            enemies = []; announce("NUKE!", "var(--neon-yellow)");
+        } else if (id === 2) {
+            let count = 0;
+            const int = setInterval(() => {
+                if (!state.running) { clearInterval(int); return; }
+                bullets.push({x: player.x, y: player.y - 40, vx: (Math.random()-0.5)*10});
+                sfx.shoot();
+                if (++count > 30) clearInterval(int);
+            }, 40);
+            announce("RAPID FIRE!", "var(--neon-purple)");
+        }
+    }
+
+    class Particle {
+        constructor(x, y, color) {
+            this.x = x; this.y = y; this.color = color;
+            this.vx = (Math.random()-0.5)*12; this.vy = (Math.random()-0.5)*12; this.life = 1.0;
+        }
+        update() { this.x += this.vx; this.y += this.vy; this.life -= 0.03; }
+        draw() { ctx.globalAlpha = this.life; ctx.fillStyle = this.color; ctx.beginPath(); ctx.arc(this.x, this.y, 2, 0, Math.PI*2); ctx.fill(); ctx.globalAlpha = 1; }
+    }
+
+    class Enemy {
+        constructor() {
+            const sizeMult = 0.85; 
+            this.w = 45 * sizeMult;
+            this.h = 28 * sizeMult;
+            
+            let foundX = false;
+            let attempts = 0;
+            while(!foundX && attempts < 15) {
+                this.x = Math.random() * (state.width - this.w);
+                foundX = !enemies.some(e => e.y < 80 && Math.abs(e.x - this.x) < 70);
+                attempts++;
+            }
+            
+            this.y = -60;
+            this.speed = (2.2 + (state.level * 0.35));
+            this.color = `hsl(${Math.random()*360}, 75%, 60%)`;
+        }
+        update() { this.y += this.speed; }
+        draw() {
+            ctx.fillStyle = this.color; 
+            ctx.beginPath(); 
+            ctx.ellipse(this.x + this.w/2, this.y + this.h/2, this.w/2, this.h/2, 0, 0, Math.PI*2); 
+            ctx.fill();
+            ctx.fillStyle = "rgba(255,255,255,0.4)"; 
+            ctx.beginPath(); 
+            ctx.arc(this.x + this.w/2, this.y + this.h/3, this.w/6, 0, Math.PI, true); 
+            ctx.fill();
+        }
+    }
+
+    function levelJump() {
+        state.isWarping = true;
+        sfx.warp();
+        warpEffect.style.transition = 'opacity 0.2s';
+        warpEffect.style.opacity = '0.8';
+        enemies = [];
+        setTimeout(() => {
+            state.level++;
+            state.score += 1500;
+            announce(`קפיצה לשלב ${state.level}!`, "white");
+            warpEffect.style.opacity = '0';
+            state.isWarping = false;
+        }, 500);
+    }
+
+    function announce(text, color) {
+        announcement.innerText = text; announcement.style.color = color;
+        announcement.style.opacity = 1; setTimeout(() => announcement.style.opacity = 0, 1000);
+    }
+
+    function resetPowers() {
+        player.hasShield = false; 
+        player.hasDouble = false; 
+        pwrUi.style.display = 'none';
+    }
+
+    function update() {
+        if (!state.running) return;
+        state.tick++;
+
+        state.skills.forEach(s => {
+            if (s.current < s.cooldown) s.current += 1/60;
+            const el = document.getElementById(`skill-${s.id}`);
+            const overlayEl = document.getElementById(`overlay-${s.id}`);
+            const percent = (s.current / s.cooldown) * 100;
+            overlayEl.style.height = (100 - percent) + "%";
+            if (percent >= 100) el.classList.add('ready'); else el.classList.remove('ready');
+        });
+
+        if (state.giftTime > 0) {
+            state.giftTime -= 1/60;
+            pwrTime.innerText = state.giftTime.toFixed(1);
+            if (state.giftTime <= 0) resetPowers();
+        }
+
+        player.x += (player.targetX - player.x) * player.easing;
+        const starSpeedMult = state.isWarping ? 20 : 1;
+        state.stars.forEach(s => { 
+            s.y += s.speed * starSpeedMult; 
+            if (s.y > state.height) s.y = 0; 
+        });
+
+        bullets.forEach((b, i) => { b.y -= 15; b.x += (b.vx || 0); if (b.y < -30) bullets.splice(i, 1); });
+
+        if (!state.isWarping && Math.random() < 0.022 + (state.level * 0.004)) {
+            if (enemies.length < 12 + state.level) enemies.push(new Enemy());
+        }
+
+        gifts.forEach((g, i) => {
+            g.update();
+            if (Math.hypot(g.x - player.x, g.y - player.y) < 40) {
+                sfx.power();
+                if (g.type === 'jump') {
+                    levelJump();
+                } else {
+                    state.giftTime = g.type === 'double' ? 4 : 6;
+                    resetPowers();
+                    pwrUi.style.display = 'block';
+                    if (g.type === 'shield') { player.hasShield = true; document.getElementById("powerup-text").innerText = "מגן פעיל"; }
+                    else if (g.type === 'double') { player.hasDouble = true; document.getElementById("powerup-text").innerText = "ירי כפול"; }
+                }
+                gifts.splice(i, 1);
+            }
+            if (g.y > state.height) gifts.splice(i, 1);
+        });
+
+        enemies.forEach((en, i) => {
+            en.update();
+            if (Math.abs(en.x + en.w/2 - player.x) < en.w/2 + 5 && Math.abs(en.y + en.h/2 - player.y) < en.h/2 + 15) {
+                enemies.splice(i, 1);
+                if (player.hasShield) { player.hasShield = false; state.giftTime = 0; pwrUi.style.display='none'; } else hit();
+            }
+            if (en.y > state.height) enemies.splice(i, 1);
+
+            bullets.forEach((b, bi) => {
+                if (b.x > en.x && b.x < en.x + en.w && b.y < en.y + en.h && b.y > en.y) {
+                    if (Math.random() < 0.16) {
+                        const r = Math.random();
+                        let type;
+                        if (r < 0.45) type = 'shield';
+                        else if (r < 0.94) type = 'double';
+                        else type = 'jump'; 
+                        gifts.push(new Gift(en.x + en.w/2, en.y + en.h/2, type));
+                    }
+                    enemies.splice(i, 1); bullets.splice(bi, 1);
+                    state.score += 100; sfx.hit();
+                    for(let j=0; j<8; j++) particles.push(new Particle(en.x + en.w/2, en.y + en.h/2, en.color));
+                    if (state.score > 0 && state.score % 2500 === 0) { state.level++; announce(`שלב ${state.level}`, "cyan"); }
+                }
+            });
+        });
+        particles.forEach((p, i) => { p.update(); if (p.life <= 0) particles.splice(i, 1); });
+        scoreVal.innerText = state.score.toString().padStart(5, '0');
+    }
+
+    function draw() {
+        ctx.clearRect(0, 0, state.width, state.height);
+        ctx.fillStyle = "white"; 
+        state.stars.forEach(s => {
+            if (state.isWarping) {
+                ctx.strokeStyle = "white"; ctx.lineWidth = 2;
+                ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.lineTo(s.x, s.y + 40); ctx.stroke();
+            } else {
+                ctx.fillRect(s.x, s.y, s.size, s.size);
+            }
+        });
+
+        // --- חללית עם אפקט אש ---
+        ctx.save(); ctx.translate(player.x, player.y);
+        if (player.hasShield) { ctx.strokeStyle = "#00ff00"; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(0, 0, 50, 0, Math.PI*2); ctx.stroke(); }
+        ctx.shadowBlur = state.isWarping ? 30 : 15; ctx.shadowColor = "#00f3ff";
+
+        // להבה מאחורה (משתנה בגודל)
+        const flameSize = 15 + Math.sin(state.tick * 0.5) * 5;
+        const grad = ctx.createLinearGradient(0, 5, 0, 5 + flameSize);
+        grad.addColorStop(0, "#ffcf00");
+        grad.addColorStop(1, "transparent");
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.moveTo(-8, 8); ctx.lineTo(0, 8 + flameSize); ctx.lineTo(8, 8);
+        ctx.fill();
+
+        // גוף החללית
+        ctx.fillStyle = "#00f3ff";
+        ctx.beginPath();
+        ctx.moveTo(0, -42);      // חרטום חד וארוך
+        ctx.lineTo(25, 15);      // כנף ימין
+        ctx.lineTo(0, 5);        // אחוריים
+        ctx.lineTo(-25, 15);     // כנף שמאל
+        ctx.closePath();
+        ctx.fill();
+
+        // תא טייס
+        ctx.fillStyle = "rgba(0,0,0,0.5)";
+        ctx.beginPath();
+        ctx.ellipse(0, -12, 5, 10, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        // קווי עיצוב זוהרים
+        ctx.strokeStyle = "rgba(255,255,255,0.8)";
+        ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(0, -40); ctx.lineTo(0, -20); ctx.stroke();
+        
+        if (state.isWarping) {
+            ctx.fillStyle = "white";
+            ctx.beginPath(); ctx.moveTo(-6, 15); ctx.lineTo(0, 70); ctx.lineTo(6, 15); ctx.fill();
+        }
+        ctx.restore();
+
+        bullets.forEach(b => { ctx.fillStyle = "white"; ctx.fillRect(b.x-2, b.y, 4, 18); });
+        gifts.forEach(g => g.draw()); enemies.forEach(en => en.draw()); particles.forEach(p => p.draw());
+        requestAnimationFrame(() => { update(); draw(); });
+    }
+
+    function hit() {
+        if (state.isWarping) return;
+        state.lives--; livesVal.innerText = "❤".repeat(Math.max(0, state.lives)); sfx.hit();
+        if (state.lives <= 0) { state.running = false; overlay.style.display = "flex"; }
+    }
+
+    function shoot() {
+        if (!state.running || state.isWarping) return;
+        if (player.hasDouble) {
+            bullets.push({x: player.x-15, y: player.y-30});
+            bullets.push({x: player.x+15, y: player.y-30});
+        } else bullets.push({x: player.x, y: player.y-40});
+        sfx.shoot();
+    }
+
+    window.addEventListener('mousemove', e => player.targetX = e.clientX);
+    window.addEventListener('mousedown', shoot);
+    window.addEventListener('keydown', e => {
+        if (e.key === '1') useSkill(1); if (e.key === '2') useSkill(2);
+        if (e.code === 'Space') shoot();
+    });
+
+    document.getElementById('start-btn').addEventListener('click', () => {
+        audioCtx.resume();
+        state.score = 0; state.lives = 3; state.level = 1; state.running = true;
+        state.skills.forEach(s => s.current = 0);
+        state.giftTime = 0; resetPowers();
+        enemies = []; bullets = []; gifts = []; overlay.style.display = "none";
+        livesVal.innerText = "❤❤❤";
+    });
+
+    init(); draw();
+</script>
+</body>
+</html>
